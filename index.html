@@ -19,6 +19,7 @@
     @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
     @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #080a0f; }
     ::-webkit-scrollbar-thumb { background: #1e2a3a; border-radius: 3px; }
@@ -34,6 +35,8 @@ const ADMIN_PASSWORD = "nix2024";
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Status flow:  open → pending (user requests) → done (admin confirms)
+
 function generateId() {
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 }
@@ -46,124 +49,146 @@ function formatDate(ts) {
 }
 
 const SECTIONS = [
-  {
-    id: "user",
-    label: "User",
-    emoji: "👤",
-    accent: "#00d4ff",
-    accentDim: "#00d4ff18",
-    accentBorder: "#00d4ff33",
-    description: "High priority — user experience"
-  },
-  {
-    id: "admin",
-    label: "Admin",
-    emoji: "⚙️",
-    accent: "#a78bfa",
-    accentDim: "#a78bfa18",
-    accentBorder: "#a78bfa33",
-    description: "Normal priority — management panel"
-  }
+  { id: "user",  label: "User",  emoji: "👤", accent: "#00d4ff", accentDim: "#00d4ff18", accentBorder: "#00d4ff33", description: "High priority — user experience" },
+  { id: "admin", label: "Admin", emoji: "⚙️", accent: "#a78bfa", accentDim: "#a78bfa18", accentBorder: "#a78bfa33", description: "Normal priority — management panel" }
 ];
 
+function StatusBadge({ status }) {
+  const cfg = {
+    open:    { label: "Open",         bg: "#1e2a3a",   color: "#556",    border: "#2a3a4a", anim: "none" },
+    pending: { label: "⏳ Pending",   bg: "#f59e0b18", color: "#f59e0b", border: "#f59e0b44", anim: "pulse 2s ease infinite" },
+    done:    { label: "✓ Confirmed",  bg: "#10b98118", color: "#10b981", border: "#10b98144", anim: "none" },
+  };
+  const c = cfg[status] || cfg.open;
+  return (
+    <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99, background:c.bg, color:c.color, border:`1px solid ${c.border}`, whiteSpace:"nowrap", animation:c.anim }}>
+      {c.label}
+    </span>
+  );
+}
+
 function App() {
-  const [tasks, setTasks] = React.useState([]);
-  const [loading, setLoading] = React.useState(true);
-  const [isAdmin, setIsAdmin] = React.useState(false);
-  const [showLogin, setShowLogin] = React.useState(false);
-  const [pwd, setPwd] = React.useState("");
-  const [pwdError, setPwdError] = React.useState(false);
-  const [newTask, setNewTask] = React.useState({ user: "", admin: "" });
-  const [expandedId, setExpandedId] = React.useState(null);
-  const [toast, setToast] = React.useState(null);
+  const [tasks, setTasks]                 = React.useState([]);
+  const [loading, setLoading]             = React.useState(true);
+  const [isAdmin, setIsAdmin]             = React.useState(false);
+  const [showLogin, setShowLogin]         = React.useState(false);
+  const [pwd, setPwd]                     = React.useState("");
+  const [pwdError, setPwdError]           = React.useState(false);
+  const [newTask, setNewTask]             = React.useState({ user: "", admin: "" });
+  const [expandedId, setExpandedId]       = React.useState(null);
+  const [toast, setToast]                 = React.useState(null);
   const [activeSection, setActiveSection] = React.useState("user");
-  const [connected, setConnected] = React.useState(false);
+  const [connected, setConnected]         = React.useState(false);
 
   React.useEffect(() => {
     fetchTasks();
-
     const channel = supabase
       .channel("tasks-realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, payload => {
-        if (payload.eventType === "INSERT") {
-          setTasks(prev => [payload.new, ...prev]);
-        } else if (payload.eventType === "UPDATE") {
-          setTasks(prev => prev.map(t => t.id === payload.new.id ? payload.new : t));
-        } else if (payload.eventType === "DELETE") {
-          setTasks(prev => prev.filter(t => t.id !== payload.old.id));
-        }
+        if (payload.eventType === "INSERT") setTasks(prev => [payload.new, ...prev]);
+        else if (payload.eventType === "UPDATE") setTasks(prev => prev.map(t => t.id === payload.new.id ? payload.new : t));
+        else if (payload.eventType === "DELETE") setTasks(prev => prev.filter(t => t.id !== payload.old.id));
       })
-      .subscribe(status => {
-        setConnected(status === "SUBSCRIBED");
-      });
-
+      .subscribe(status => setConnected(status === "SUBSCRIBED"));
     return () => supabase.removeChannel(channel);
   }, []);
 
   async function fetchTasks() {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("tasks")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
     if (!error && data) setTasks(data);
     setLoading(false);
   }
 
   function showToast(msg, type = "ok") {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 2500);
+    setTimeout(() => setToast(null), 2800);
   }
 
   function tryLogin() {
     if (pwd === ADMIN_PASSWORD) {
       setIsAdmin(true); setShowLogin(false); setPwd(""); setPwdError(false);
-      showToast("Admin access granted");
+      showToast("Admin access granted 👑");
     } else {
       setPwdError(true);
       setTimeout(() => setPwdError(false), 1000);
     }
   }
 
+  function optimistic(id, patch) {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
+  }
+
   async function addTask(section) {
+    if (!isAdmin) return;
     const text = newTask[section].trim();
     if (!text) return;
-    const task = {
-      id: generateId(), section, text, done: false,
-      created_at: Date.now(), done_at: null, notes: "", images: []
-    };
+    const task = { id: generateId(), section, text, status: "open", created_at: Date.now(), done_at: null, notes: "", images: [], comments: [] };
     const { error } = await supabase.from("tasks").insert([task]);
     if (error) { showToast("Error adding task", "warn"); return; }
     setNewTask(p => ({ ...p, [section]: "" }));
     showToast("Task added!");
   }
 
-  async function toggleTask(id, currentDone) {
-    await supabase.from("tasks").update({ done: !currentDone, done_at: !currentDone ? Date.now() : null }).eq("id", id);
-  }
-
   async function deleteTask(id) {
+    if (!isAdmin) return;
     const { error } = await supabase.from("tasks").delete().eq("id", id);
     if (error) { showToast("Error deleting task", "warn"); return; }
     if (expandedId === id) setExpandedId(null);
     showToast("Task deleted", "warn");
   }
 
-  // FIX 1: Optimistically update local state so textarea reflects typing immediately
+  async function requestComplete(id) {
+    optimistic(id, { status: "pending" });
+    const { error } = await supabase.from("tasks").update({ status: "pending" }).eq("id", id);
+    if (error) { showToast("Error updating task", "warn"); optimistic(id, { status: "open" }); return; }
+    showToast("Marked as done — waiting for admin ⏳");
+  }
+
+  async function undoPending(id) {
+    optimistic(id, { status: "open" });
+    await supabase.from("tasks").update({ status: "open" }).eq("id", id);
+    showToast("Request cancelled");
+  }
+
+  async function confirmDone(id) {
+    if (!isAdmin) return;
+    const now = Date.now();
+    optimistic(id, { status: "done", done_at: now });
+    const { error } = await supabase.from("tasks").update({ status: "done", done_at: now }).eq("id", id);
+    if (error) { showToast("Error confirming task", "warn"); return; }
+    showToast("Task confirmed complete ✓");
+  }
+
+  async function reopenTask(id) {
+    if (!isAdmin) return;
+    optimistic(id, { status: "open", done_at: null });
+    await supabase.from("tasks").update({ status: "open", done_at: null }).eq("id", id);
+    showToast("Task reopened");
+  }
+
+  async function addComment(id, text, author) {
+    if (!text.trim()) return;
+    const task = tasks.find(t => t.id === id);
+    const comments = [...(task.comments || []), { id: generateId(), text: text.trim(), author, ts: Date.now() }];
+    optimistic(id, { comments });
+    await supabase.from("tasks").update({ comments }).eq("id", id);
+  }
+
   async function updateNotes(id, notes) {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, notes } : t));
+    optimistic(id, { notes });
     await supabase.from("tasks").update({ notes }).eq("id", id);
   }
 
-  // FIX 2: Optimistically update local state so image appears immediately after upload
   async function addImage(id, e) {
+    if (!isAdmin) return;
     const file = e.target.files[0];
     if (!file) return;
     const task = tasks.find(t => t.id === id);
     const reader = new FileReader();
     reader.onload = async ev => {
       const images = [...(task.images || []), { id: generateId(), url: ev.target.result, name: file.name }];
-      setTasks(prev => prev.map(t => t.id === id ? { ...t, images } : t));
+      optimistic(id, { images });
       const { error } = await supabase.from("tasks").update({ images }).eq("id", id);
       if (error) showToast("Error uploading screenshot", "warn");
       else showToast("Screenshot added!");
@@ -171,24 +196,24 @@ function App() {
     reader.readAsDataURL(file);
   }
 
-  // FIX 3: Optimistically update local state so image removal is instant
   async function removeImage(taskId, imgId) {
+    if (!isAdmin) return;
     const task = tasks.find(t => t.id === taskId);
     const images = (task.images || []).filter(i => i.id !== imgId);
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, images } : t));
+    optimistic(taskId, { images });
     await supabase.from("tasks").update({ images }).eq("id", taskId);
   }
 
   const currentSection = SECTIONS.find(s => s.id === activeSection);
-  const currentTasks = tasks.filter(t => t.section === activeSection);
-  const doneCount = currentTasks.filter(t => t.done).length;
-  const pct = currentTasks.length ? Math.round((doneCount / currentTasks.length) * 100) : 0;
-  const userTasks = tasks.filter(t => t.section === "user");
-  const adminTasks = tasks.filter(t => t.section === "admin");
+  const currentTasks   = tasks.filter(t => t.section === activeSection);
+  const doneCount      = currentTasks.filter(t => t.status === "done").length;
+  const pendingCount   = currentTasks.filter(t => t.status === "pending").length;
+  const pct            = currentTasks.length ? Math.round((doneCount / currentTasks.length) * 100) : 0;
+  const userTasks      = tasks.filter(t => t.section === "user");
+  const adminTasks     = tasks.filter(t => t.section === "admin");
 
   return (
     <div style={{ minHeight:"100vh", background:"#080a0f", fontFamily:"'Sora','Segoe UI',sans-serif", color:"#dde2f0", position:"relative", overflow:"hidden" }}>
-
       <div style={{ position:"fixed", inset:0, zIndex:0, backgroundImage:`linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px)`, backgroundSize:"40px 40px" }} />
       <div style={{ position:"fixed", top:-200, left:"50%", transform:"translateX(-50%)", width:600, height:400, borderRadius:"50%", background:`radial-gradient(ellipse,${currentSection.accent}12 0%,transparent 70%)`, zIndex:0, transition:"background 0.6s ease", pointerEvents:"none" }} />
 
@@ -224,26 +249,29 @@ function App() {
               <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
                 <div style={{ width:7, height:7, borderRadius:"50%", background:connected?"#10b981":"#f59e0b", boxShadow:connected?"0 0 6px #10b981":"0 0 6px #f59e0b" }} />
                 <span style={{ fontSize:12, color:connected?"#10b981":"#f59e0b" }}>{connected ? "Live sync active" : "Connecting..."}</span>
+                {!isAdmin && <span style={{ fontSize:11, color:"#445", marginLeft:4 }}>— User view</span>}
               </div>
             </div>
             <button onClick={() => isAdmin ? (setIsAdmin(false), showToast("Logged out")) : setShowLogin(true)}
               style={{ padding:"9px 18px", background:isAdmin?"#00d4ff18":"#1a1f2e", border:`1px solid ${isAdmin?"#00d4ff44":"#1e2a3a"}`, borderRadius:10, color:isAdmin?"#00d4ff":"#556", fontSize:13, fontWeight:700, fontFamily:"inherit", transition:"all 0.2s" }}>
-              {isAdmin ? "👑 Admin" : "🔒 Login"}
+              {isAdmin ? "👑 Admin" : "🔒 Admin Login"}
             </button>
           </div>
 
           <div style={{ display:"flex", gap:10, marginBottom:28 }}>
             {SECTIONS.map(s => {
-              const st = s.id==="user" ? userTasks : adminTasks;
-              const done = st.filter(t => t.done).length;
-              const total = st.length;
-              const active = activeSection===s.id;
+              const st      = s.id==="user" ? userTasks : adminTasks;
+              const done    = st.filter(t => t.status==="done").length;
+              const pending = st.filter(t => t.status==="pending").length;
+              const total   = st.length;
+              const active  = activeSection===s.id;
               return (
                 <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flex:1, padding:"16px 20px", borderRadius:14, border:`1px solid ${active?s.accentBorder:"#1e2a3a"}`, background:active?s.accentDim:"#0d1117", transition:"all 0.25s", textAlign:"left", fontFamily:"inherit" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, flexWrap:"wrap" }}>
                     <span style={{ fontSize:18 }}>{s.emoji}</span>
                     <span style={{ fontSize:15, fontWeight:800, color:active?s.accent:"#778" }}>{s.label}</span>
                     {s.id==="user" && <span style={{ fontSize:10, fontWeight:700, padding:"2px 7px", background:"#ff6b6b22", color:"#ff6b6b", borderRadius:99, border:"1px solid #ff6b6b33" }}>HIGH PRIORITY</span>}
+                    {pending > 0 && <span style={{ fontSize:10, fontWeight:700, padding:"2px 7px", background:"#f59e0b22", color:"#f59e0b", borderRadius:99, border:"1px solid #f59e0b44", animation:"pulse 2s ease infinite" }}>⏳ {pending}</span>}
                   </div>
                   <div style={{ fontSize:12, color:"#445", marginBottom:8 }}>{s.description}</div>
                   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -259,16 +287,16 @@ function App() {
         </div>
 
         <div style={{ maxWidth:780, margin:"0 auto", padding:"0 24px 40px" }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <span style={{ fontSize:20 }}>{currentSection.emoji}</span>
-              <span style={{ fontSize:17, fontWeight:800, color:currentSection.accent }}>{currentSection.label}</span>
-              <span style={{ fontSize:12, padding:"3px 10px", borderRadius:99, background:currentSection.accentDim, color:currentSection.accent, border:`1px solid ${currentSection.accentBorder}` }}>{doneCount}/{currentTasks.length} done • {pct}%</span>
-            </div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+            <span style={{ fontSize:20 }}>{currentSection.emoji}</span>
+            <span style={{ fontSize:17, fontWeight:800, color:currentSection.accent }}>{currentSection.label}</span>
+            <span style={{ fontSize:12, padding:"3px 10px", borderRadius:99, background:currentSection.accentDim, color:currentSection.accent, border:`1px solid ${currentSection.accentBorder}` }}>{doneCount}/{currentTasks.length} done • {pct}%</span>
+            {pendingCount > 0 && <span style={{ fontSize:12, padding:"3px 10px", borderRadius:99, background:"#f59e0b18", color:"#f59e0b", border:"1px solid #f59e0b44", animation:"pulse 2s ease infinite" }}>⏳ {pendingCount} awaiting confirmation</span>}
           </div>
 
           {isAdmin && (
             <div style={{ background:"#0d1117", border:`1px solid ${currentSection.accentBorder}`, borderRadius:14, padding:16, marginBottom:16 }}>
+              <div style={{ fontSize:11, color:currentSection.accent, fontWeight:700, letterSpacing:1, marginBottom:8 }}>+ NEW TASK</div>
               <div style={{ display:"flex", gap:8 }}>
                 <input value={newTask[activeSection]}
                   onChange={e => setNewTask(p => ({ ...p, [activeSection]: e.target.value }))}
@@ -290,59 +318,158 @@ function App() {
             <div style={{ textAlign:"center", padding:"60px 0", border:"1px dashed #1e2a3a", borderRadius:16 }}>
               <div style={{ fontSize:36, marginBottom:12 }}>{currentSection.emoji}</div>
               <div style={{ color:"#445", fontSize:14 }}>No tasks yet</div>
-              <div style={{ color:"#334", fontSize:12, marginTop:6 }}>{isAdmin?"Use the field above to add one":"Login as admin to add tasks"}</div>
+              <div style={{ color:"#334", fontSize:12, marginTop:6 }}>{isAdmin ? "Use the field above to add one" : "No tasks have been assigned yet"}</div>
             </div>
           ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
               {currentTasks.map((task, idx) => (
-                <div key={task.id} style={{ background:"#0d1117", border:`1px solid ${task.done?currentSection.accentBorder:"#1e2a3a"}`, borderRadius:14, overflow:"hidden", opacity:task.done?0.65:1, transition:"all 0.2s", animation:`fadeUp 0.3s ease ${idx*0.03}s both` }}>
-                  <div style={{ padding:"14px 16px" }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                      <button onClick={() => toggleTask(task.id, task.done)} style={{ width:22, height:22, minWidth:22, borderRadius:6, border:`2px solid ${task.done?currentSection.accent:"#2a3040"}`, background:task.done?currentSection.accentDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
-                        {task.done && <span style={{ color:currentSection.accent, fontSize:13, fontWeight:900 }}>✓</span>}
-                      </button>
-                      <span style={{ flex:1, fontSize:14, fontWeight:600, textDecoration:task.done?"line-through":"none", color:task.done?"#445":"#dde2f0" }}>{task.text}</span>
-                      {(task.images||[]).length > 0 && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>🖼 {task.images.length}</span>}
-                      {task.notes && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>📝</span>}
-                      <div style={{ display:"flex", gap:6 }}>
-                        <button onClick={() => setExpandedId(expandedId===task.id?null:task.id)} style={{ background:expandedId===task.id?currentSection.accentDim:"#1a1f2e", border:`1px solid ${expandedId===task.id?currentSection.accentBorder:"#1e2a3a"}`, borderRadius:7, padding:"4px 10px", color:expandedId===task.id?currentSection.accent:"#445", fontSize:12, fontFamily:"inherit" }}>{expandedId===task.id?"▲":"▼"}</button>
-                        {isAdmin && <button onClick={() => deleteTask(task.id)} style={{ background:"#1a1010", border:"1px solid #3a1a1a", borderRadius:7, padding:"4px 10px", color:"#ef4444", fontSize:12, fontFamily:"inherit" }}>✕</button>}
-                      </div>
-                    </div>
-                    {task.done && task.done_at && <div style={{ fontSize:11, color:"#334", marginTop:6, paddingLeft:34 }}>✓ Completed {formatDate(task.done_at)}</div>}
-                  </div>
-
-                  {expandedId===task.id && (
-                    <div style={{ borderTop:"1px solid #1e2a3a", padding:16, background:"#080a0f" }}>
-                      <div style={{ marginBottom:14 }}>
-                        <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:6 }}>NOTES</div>
-                        <textarea value={task.notes||""} onChange={e => updateNotes(task.id, e.target.value)} placeholder="Add notes or details..." rows={3}
-                          style={{ width:"100%", background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px", color:"#dde2f0", fontSize:13, resize:"vertical", boxSizing:"border-box", fontFamily:"inherit", lineHeight:1.5 }} />
-                      </div>
-                      <div>
-                        <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:8 }}>SCREENSHOTS ({(task.images||[]).length})</div>
-                        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                          {(task.images||[]).map(img => (
-                            <div key={img.id} style={{ position:"relative" }}>
-                              <img src={img.url} alt={img.name} onClick={() => window.open(img.url,"_blank")} style={{ width:72, height:72, objectFit:"cover", display:"block", border:"1px solid #1e2a3a", borderRadius:8, cursor:"pointer" }} />
-                              <button onClick={() => removeImage(task.id, img.id)} style={{ position:"absolute", top:3, right:3, background:"rgba(0,0,0,0.8)", border:"none", borderRadius:"50%", width:16, height:16, color:"#ef4444", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
-                            </div>
-                          ))}
-                          <label style={{ width:72, height:72, background:"#0d1117", border:`2px dashed ${currentSection.accentBorder}`, borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", color:currentSection.accent, fontSize:20, gap:2 }}>
-                            <span>+</span>
-                            <span style={{ fontSize:9, color:"#445" }}>screen</span>
-                            <input type="file" accept="image/*" style={{ display:"none" }} onChange={e => addImage(task.id, e)} />
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <TaskCard key={task.id} task={task} idx={idx} isAdmin={isAdmin} section={currentSection}
+                  expanded={expandedId === task.id}
+                  onToggleExpand={() => setExpandedId(expandedId===task.id ? null : task.id)}
+                  onDelete={() => deleteTask(task.id)}
+                  onRequestComplete={() => requestComplete(task.id)}
+                  onUndoPending={() => undoPending(task.id)}
+                  onConfirmDone={() => confirmDone(task.id)}
+                  onReopen={() => reopenTask(task.id)}
+                  onUpdateNotes={notes => updateNotes(task.id, notes)}
+                  onAddComment={(text, author) => addComment(task.id, text, author)}
+                  onAddImage={e => addImage(task.id, e)}
+                  onRemoveImage={imgId => removeImage(task.id, imgId)}
+                />
               ))}
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDelete, onRequestComplete, onUndoPending, onConfirmDone, onReopen, onUpdateNotes, onAddComment, onAddImage, onRemoveImage }) {
+  const [commentText, setCommentText] = React.useState("");
+  const [authorName, setAuthorName]   = React.useState("");
+
+  const isDone    = task.status === "done";
+  const isPending = task.status === "pending";
+
+  function submitComment() {
+    if (!commentText.trim()) return;
+    const author = isAdmin ? "Admin" : (authorName.trim() || "User");
+    onAddComment(commentText, author);
+    setCommentText("");
+  }
+
+  // Checkbox area: shows different control based on role + status
+  function CheckControl() {
+    if (isDone) {
+      return (
+        <button onClick={isAdmin ? onReopen : undefined} title={isAdmin ? "Click to reopen" : ""}
+          style={{ width:22, height:22, borderRadius:6, border:`2px solid ${section.accent}`, background:section.accentDim, display:"flex", alignItems:"center", justifyContent:"center", cursor:isAdmin?"pointer":"default" }}>
+          <span style={{ color:section.accent, fontSize:13, fontWeight:900 }}>✓</span>
+        </button>
+      );
+    }
+    if (isPending) {
+      return isAdmin ? (
+        <button onClick={onConfirmDone} title="Confirm completion"
+          style={{ width:22, height:22, borderRadius:6, border:"2px solid #f59e0b", background:"#f59e0b22", display:"flex", alignItems:"center", justifyContent:"center", animation:"pulse 1.5s ease infinite" }}>
+          <span style={{ color:"#f59e0b", fontSize:10, fontWeight:900 }}>✓?</span>
+        </button>
+      ) : (
+        <button onClick={onUndoPending} title="Cancel completion request"
+          style={{ width:22, height:22, borderRadius:6, border:"2px solid #f59e0b", background:"#f59e0b22", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <span style={{ fontSize:12 }}>⏳</span>
+        </button>
+      );
+    }
+    // open
+    return (
+      <button onClick={onRequestComplete} title="Mark as completed"
+        style={{ width:22, height:22, borderRadius:6, border:"2px solid #2a3040", background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ background:"#0d1117", border:`1px solid ${isDone ? section.accentBorder : isPending ? "#f59e0b44" : "#1e2a3a"}`, borderRadius:14, overflow:"hidden", opacity: isDone ? 0.75 : 1, transition:"all 0.2s", animation:`fadeUp 0.3s ease ${idx*0.03}s both` }}>
+      <div style={{ padding:"14px 16px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <CheckControl />
+          <span style={{ flex:1, fontSize:14, fontWeight:600, textDecoration:isDone?"line-through":"none", color:isDone?"#445":"#dde2f0" }}>{task.text}</span>
+          <StatusBadge status={task.status} />
+          {(task.images||[]).length > 0 && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>🖼 {task.images.length}</span>}
+          {(task.comments||[]).length > 0 && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>💬 {task.comments.length}</span>}
+          {task.notes && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>📝</span>}
+          <div style={{ display:"flex", gap:6 }}>
+            <button onClick={onToggleExpand} style={{ background:expanded?section.accentDim:"#1a1f2e", border:`1px solid ${expanded?section.accentBorder:"#1e2a3a"}`, borderRadius:7, padding:"4px 10px", color:expanded?section.accent:"#445", fontSize:12, fontFamily:"inherit" }}>{expanded?"▲":"▼"}</button>
+            {isAdmin && <button onClick={onDelete} style={{ background:"#1a1010", border:"1px solid #3a1a1a", borderRadius:7, padding:"4px 10px", color:"#ef4444", fontSize:12, fontFamily:"inherit" }}>✕</button>}
+          </div>
+        </div>
+        {isDone && task.done_at && <div style={{ fontSize:11, color:"#10b981", marginTop:6, paddingLeft:34 }}>✓ Confirmed complete {formatDate(task.done_at)}</div>}
+        {isPending && <div style={{ fontSize:11, color:"#f59e0b", marginTop:6, paddingLeft:34 }}>{isAdmin ? "⏳ Awaiting your confirmation — click ✓? to confirm" : "⏳ Marked as done — waiting for admin confirmation"}</div>}
+      </div>
+
+      {expanded && (
+        <div style={{ borderTop:"1px solid #1e2a3a", padding:16, background:"#080a0f" }}>
+
+          {/* Admin-only: notes + screenshots */}
+          {isAdmin && (
+            <>
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:6 }}>NOTES (admin only)</div>
+                <textarea value={task.notes||""} onChange={e => onUpdateNotes(e.target.value)} placeholder="Add internal notes..." rows={2}
+                  style={{ width:"100%", background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px", color:"#dde2f0", fontSize:13, resize:"vertical", boxSizing:"border-box", fontFamily:"inherit", lineHeight:1.5 }} />
+              </div>
+              <div style={{ marginBottom:16 }}>
+                <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:8 }}>SCREENSHOTS ({(task.images||[]).length})</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                  {(task.images||[]).map(img => (
+                    <div key={img.id} style={{ position:"relative" }}>
+                      <img src={img.url} alt={img.name} onClick={() => window.open(img.url,"_blank")} style={{ width:72, height:72, objectFit:"cover", display:"block", border:"1px solid #1e2a3a", borderRadius:8, cursor:"pointer" }} />
+                      <button onClick={() => onRemoveImage(img.id)} style={{ position:"absolute", top:3, right:3, background:"rgba(0,0,0,0.8)", border:"none", borderRadius:"50%", width:16, height:16, color:"#ef4444", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
+                    </div>
+                  ))}
+                  <label style={{ width:72, height:72, background:"#0d1117", border:`2px dashed ${section.accentBorder}`, borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", color:section.accent, fontSize:20, gap:2 }}>
+                    <span>+</span><span style={{ fontSize:9, color:"#445" }}>screen</span>
+                    <input type="file" accept="image/*" style={{ display:"none" }} onChange={onAddImage} />
+                  </label>
+                </div>
+              </div>
+              <div style={{ height:1, background:"#1e2a3a", marginBottom:16 }} />
+            </>
+          )}
+
+          {/* Comments — everyone */}
+          <div>
+            <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:10 }}>COMMENTS ({(task.comments||[]).length})</div>
+            {(task.comments||[]).length === 0 && <div style={{ fontSize:12, color:"#334", marginBottom:10 }}>No comments yet.</div>}
+            <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
+              {(task.comments||[]).map(c => (
+                <div key={c.id} style={{ background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <span style={{ fontSize:12, fontWeight:700, color: c.author==="Admin" ? section.accent : "#aab" }}>{c.author==="Admin" ? "👑 Admin" : `👤 ${c.author}`}</span>
+                    <span style={{ fontSize:11, color:"#334" }}>{formatDate(c.ts)}</span>
+                  </div>
+                  <div style={{ fontSize:13, color:"#ccd", lineHeight:1.5 }}>{c.text}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {!isAdmin && (
+                <input placeholder="Your name (optional)..." value={authorName} onChange={e => setAuthorName(e.target.value)}
+                  style={{ background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:8, padding:"8px 12px", color:"#dde2f0", fontSize:13, fontFamily:"inherit" }} />
+              )}
+              <div style={{ display:"flex", gap:6 }}>
+                <input placeholder="Write a comment..." value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                  onKeyDown={e => e.key==="Enter" && submitComment()}
+                  style={{ flex:1, background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:8, padding:"8px 12px", color:"#dde2f0", fontSize:13, fontFamily:"inherit" }} />
+                <button onClick={submitComment} style={{ padding:"8px 16px", background:`linear-gradient(135deg,${section.accent}33,${section.accent}55)`, border:`1px solid ${section.accentBorder}`, borderRadius:8, color:section.accent, fontSize:13, fontWeight:700, fontFamily:"inherit" }}>Send</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
