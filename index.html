@@ -149,10 +149,13 @@ function App() {
     showToast("Task deleted", "warn");
   }
 
+  // FIX 1: Optimistically update local state so textarea reflects typing immediately
   async function updateNotes(id, notes) {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, notes } : t));
     await supabase.from("tasks").update({ notes }).eq("id", id);
   }
 
+  // FIX 2: Optimistically update local state so image appears immediately after upload
   async function addImage(id, e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -160,6 +163,7 @@ function App() {
     const reader = new FileReader();
     reader.onload = async ev => {
       const images = [...(task.images || []), { id: generateId(), url: ev.target.result, name: file.name }];
+      setTasks(prev => prev.map(t => t.id === id ? { ...t, images } : t));
       const { error } = await supabase.from("tasks").update({ images }).eq("id", id);
       if (error) showToast("Error uploading screenshot", "warn");
       else showToast("Screenshot added!");
@@ -167,9 +171,11 @@ function App() {
     reader.readAsDataURL(file);
   }
 
+  // FIX 3: Optimistically update local state so image removal is instant
   async function removeImage(taskId, imgId) {
     const task = tasks.find(t => t.id === taskId);
     const images = (task.images || []).filter(i => i.id !== imgId);
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, images } : t));
     await supabase.from("tasks").update({ images }).eq("id", taskId);
   }
 
@@ -318,7 +324,7 @@ function App() {
                         <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                           {(task.images||[]).map(img => (
                             <div key={img.id} style={{ position:"relative" }}>
-                              <img src={img.url} alt={img.name} onClick={() => window.open(img.url,"_blank")} style={{ width:72, height:72, objectFit:"cover", display:"block", border:"1px solid #1e2a3a", borderRadius:8 }} />
+                              <img src={img.url} alt={img.name} onClick={() => window.open(img.url,"_blank")} style={{ width:72, height:72, objectFit:"cover", display:"block", border:"1px solid #1e2a3a", borderRadius:8, cursor:"pointer" }} />
                               <button onClick={() => removeImage(task.id, img.id)} style={{ position:"absolute", top:3, right:3, background:"rgba(0,0,0,0.8)", border:"none", borderRadius:"50%", width:16, height:16, color:"#ef4444", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
                             </div>
                           ))}
