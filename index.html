@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NixFunding — Task Board</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800;900&display=swap" rel="stylesheet"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #080a0f; }
+    input:focus, textarea:focus { outline: 1px solid #00d4ff44 !important; }
+    button { cursor: pointer; }
+    button:hover { filter: brightness(1.15); }
+    @keyframes slideIn { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
+    @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+    @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #080a0f; }
+    ::-webkit-scrollbar-thumb { background: #1e2a3a; border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+const SUPABASE_URL = "https://xwltkyyeawkitysjkxtf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_J4AbDe8R-Wo3kfGR3btOug_1-ffTD0R";
+const ADMIN_PASSWORD = "nix2024";
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function generateId() {
+  return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+}
+
+function formatDate(ts) {
+  if (!ts) return "";
+  return new Date(ts).toLocaleDateString("en-GB", {
+    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
+  });
+}
+
+const SECTIONS = [
+  {
+    id: "user",
+    label: "User",
+    emoji: "👤",
+    accent: "#00d4ff",
+    accentDim: "#00d4ff18",
+    accentBorder: "#00d4ff33",
+    description: "High priority — user experience"
+  },
+  {
+    id: "admin",
+    label: "Admin",
+    emoji: "⚙️",
+    accent: "#a78bfa",
+    accentDim: "#a78bfa18",
+    accentBorder: "#a78bfa33",
+    description: "Normal priority — management panel"
+  }
+];
+
+function App() {
+  const [tasks, setTasks] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [isAdmin, setIsAdmin] = React.useState(false);
+  const [showLogin, setShowLogin] = React.useState(false);
+  const [pwd, setPwd] = React.useState("");
+  const [pwdError, setPwdError] = React.useState(false);
+  const [newTask, setNewTask] = React.useState({ user: "", admin: "" });
+  const [expandedId, setExpandedId] = React.useState(null);
+  const [toast, setToast] = React.useState(null);
+  const [activeSection, setActiveSection] = React.useState("user");
+  const [connected, setConnected] = React.useState(false);
+
+  React.useEffect(() => {
+    fetchTasks();
+
+    const channel = supabase
+      .channel("tasks-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, payload => {
+        if (payload.eventType === "INSERT") {
+          setTasks(prev => [payload.new, ...prev]);
+        } else if (payload.eventType === "UPDATE") {
+          setTasks(prev => prev.map(t => t.id === payload.new.id ? payload.new : t));
+        } else if (payload.eventType === "DELETE") {
+          setTasks(prev => prev.filter(t => t.id !== payload.old.id));
+        }
+      })
+      .subscribe(status => {
+        setConnected(status === "SUBSCRIBED");
+      });
+
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  async function fetchTasks() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (!error && data) setTasks(data);
+    setLoading(false);
+  }
+
+  function showToast(msg, type = "ok") {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 2500);
+  }
+
+  function tryLogin() {
+    if (pwd === ADMIN_PASSWORD) {
+      setIsAdmin(true); setShowLogin(false); setPwd(""); setPwdError(false);
+      showToast("Admin access granted");
+    } else {
+      setPwdError(true);
+      setTimeout(() => setPwdError(false), 1000);
+    }
+  }
+
+  async function addTask(section) {
+    const text = newTask[section].trim();
+    if (!text) return;
+    const task = {
+      id: generateId(), section, text, done: false,
+      created_at: Date.now(), done_at: null, notes: "", images: []
+    };
+    const { error } = await supabase.from("tasks").insert([task]);
+    if (error) { showToast("Error adding task", "warn"); return; }
+    setNewTask(p => ({ ...p, [section]: "" }));
+    showToast("Task added!");
+  }
+
+  async function toggleTask(id, currentDone) {
+    await supabase.from("tasks").update({ done: !currentDone, done_at: !currentDone ? Date.now() : null }).eq("id", id);
+  }
+
+  async function deleteTask(id) {
+    const { error } = await supabase.from("tasks").delete().eq("id", id);
+    if (error) { showToast("Error deleting task", "warn"); return; }
+    if (expandedId === id) setExpandedId(null);
+    showToast("Task deleted", "warn");
+  }
+
+  async function updateNotes(id, notes) {
+    await supabase.from("tasks").update({ notes }).eq("id", id);
+  }
+
+  async function addImage(id, e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const task = tasks.find(t => t.id === id);
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      const images = [...(task.images || []), { id: generateId(), url: ev.target.result, name: file.name }];
+      const { error } = await supabase.from("tasks").update({ images }).eq("id", id);
+      if (error) showToast("Error uploading screenshot", "warn");
+      else showToast("Screenshot added!");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function removeImage(taskId, imgId) {
+    const task = tasks.find(t => t.id === taskId);
+    const images = (task.images || []).filter(i => i.id !== imgId);
+    await supabase.from("tasks").update({ images }).eq("id", taskId);
+  }
+
+  const currentSection = SECTIONS.find(s => s.id === activeSection);
+  const currentTasks = tasks.filter(t => t.section === activeSection);
+  const doneCount = currentTasks.filter(t => t.done).length;
+  const pct = currentTasks.length ? Math.round((doneCount / currentTasks.length) * 100) : 0;
+  const userTasks = tasks.filter(t => t.section === "user");
+  const adminTasks = tasks.filter(t => t.section === "admin");
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#080a0f", fontFamily:"'Sora','Segoe UI',sans-serif", color:"#dde2f0", position:"relative", overflow:"hidden" }}>
+
+      <div style={{ position:"fixed", inset:0, zIndex:0, backgroundImage:`linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px)`, backgroundSize:"40px 40px" }} />
+      <div style={{ position:"fixed", top:-200, left:"50%", transform:"translateX(-50%)", width:600, height:400, borderRadius:"50%", background:`radial-gradient(ellipse,${currentSection.accent}12 0%,transparent 70%)`, zIndex:0, transition:"background 0.6s ease", pointerEvents:"none" }} />
+
+      {toast && (
+        <div style={{ position:"fixed", top:20, right:20, zIndex:9999, background:toast.type==="warn"?"#ef444420":"#00d4ff18", border:`1px solid ${toast.type==="warn"?"#ef4444":"#00d4ff44"}`, color:toast.type==="warn"?"#ef4444":"#00d4ff", padding:"10px 18px", borderRadius:10, fontWeight:600, fontSize:13, backdropFilter:"blur(10px)", animation:"slideIn 0.3s ease" }}>{toast.msg}</div>
+      )}
+
+      {showLogin && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:999, backdropFilter:"blur(6px)" }}>
+          <div style={{ background:"#0d1117", borderRadius:20, padding:36, width:340, border:"1px solid #1e2a3a", boxShadow:"0 0 60px rgba(0,212,255,0.1)" }}>
+            <div style={{ fontSize:28, marginBottom:6 }}>🔐</div>
+            <div style={{ fontSize:18, fontWeight:800, marginBottom:4 }}>Admin Access</div>
+            <div style={{ fontSize:13, color:"#556", marginBottom:20 }}>NixFunding team only</div>
+            <input type="password" placeholder="Password..." value={pwd}
+              onChange={e => setPwd(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && tryLogin()} autoFocus
+              style={{ width:"100%", background:"#080a0f", border:`1px solid ${pwdError?"#ef4444":"#1e2a3a"}`, borderRadius:10, padding:"12px 14px", color:"#dde2f0", fontSize:15, marginBottom:14, boxSizing:"border-box", fontFamily:"inherit", animation:pwdError?"shake 0.3s ease":"none" }}
+            />
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => { setShowLogin(false); setPwd(""); }} style={{ flex:1, padding:12, background:"#1a1f2e", border:"1px solid #1e2a3a", borderRadius:10, color:"#778", fontWeight:600, fontSize:14, fontFamily:"inherit" }}>Cancel</button>
+              <button onClick={tryLogin} style={{ flex:1, padding:12, background:"linear-gradient(135deg,#00d4ff22,#00d4ff44)", border:"1px solid #00d4ff44", borderRadius:10, color:"#00d4ff", fontWeight:700, fontSize:14, fontFamily:"inherit" }}>Login</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ position:"relative", zIndex:1 }}>
+        <div style={{ padding:"28px 24px 0", maxWidth:780, margin:"0 auto" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:28 }}>
+            <div>
+              <div style={{ fontSize:11, fontWeight:700, letterSpacing:3, color:currentSection.accent, marginBottom:6, opacity:0.8 }}>NIXFUNDING</div>
+              <div style={{ fontSize:26, fontWeight:900, letterSpacing:"-1px", lineHeight:1 }}>Task Board</div>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
+                <div style={{ width:7, height:7, borderRadius:"50%", background:connected?"#10b981":"#f59e0b", boxShadow:connected?"0 0 6px #10b981":"0 0 6px #f59e0b" }} />
+                <span style={{ fontSize:12, color:connected?"#10b981":"#f59e0b" }}>{connected ? "Live sync active" : "Connecting..."}</span>
+              </div>
+            </div>
+            <button onClick={() => isAdmin ? (setIsAdmin(false), showToast("Logged out")) : setShowLogin(true)}
+              style={{ padding:"9px 18px", background:isAdmin?"#00d4ff18":"#1a1f2e", border:`1px solid ${isAdmin?"#00d4ff44":"#1e2a3a"}`, borderRadius:10, color:isAdmin?"#00d4ff":"#556", fontSize:13, fontWeight:700, fontFamily:"inherit", transition:"all 0.2s" }}>
+              {isAdmin ? "👑 Admin" : "🔒 Login"}
+            </button>
+          </div>
+
+          <div style={{ display:"flex", gap:10, marginBottom:28 }}>
+            {SECTIONS.map(s => {
+              const st = s.id==="user" ? userTasks : adminTasks;
+              const done = st.filter(t => t.done).length;
+              const total = st.length;
+              const active = activeSection===s.id;
+              return (
+                <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flex:1, padding:"16px 20px", borderRadius:14, border:`1px solid ${active?s.accentBorder:"#1e2a3a"}`, background:active?s.accentDim:"#0d1117", transition:"all 0.25s", textAlign:"left", fontFamily:"inherit" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                    <span style={{ fontSize:18 }}>{s.emoji}</span>
+                    <span style={{ fontSize:15, fontWeight:800, color:active?s.accent:"#778" }}>{s.label}</span>
+                    {s.id==="user" && <span style={{ fontSize:10, fontWeight:700, padding:"2px 7px", background:"#ff6b6b22", color:"#ff6b6b", borderRadius:99, border:"1px solid #ff6b6b33" }}>HIGH PRIORITY</span>}
+                  </div>
+                  <div style={{ fontSize:12, color:"#445", marginBottom:8 }}>{s.description}</div>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <div style={{ flex:1, height:4, background:"#1e2a3a", borderRadius:99, overflow:"hidden" }}>
+                      <div style={{ height:"100%", borderRadius:99, width:total?`${Math.round((done/total)*100)}%`:"0%", background:`linear-gradient(90deg,${s.accent},${s.accent}aa)`, transition:"width 0.5s ease" }} />
+                    </div>
+                    <span style={{ fontSize:12, color:"#445", whiteSpace:"nowrap" }}>{done}/{total}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ maxWidth:780, margin:"0 auto", padding:"0 24px 40px" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:20 }}>{currentSection.emoji}</span>
+              <span style={{ fontSize:17, fontWeight:800, color:currentSection.accent }}>{currentSection.label}</span>
+              <span style={{ fontSize:12, padding:"3px 10px", borderRadius:99, background:currentSection.accentDim, color:currentSection.accent, border:`1px solid ${currentSection.accentBorder}` }}>{doneCount}/{currentTasks.length} done • {pct}%</span>
+            </div>
+          </div>
+
+          {isAdmin && (
+            <div style={{ background:"#0d1117", border:`1px solid ${currentSection.accentBorder}`, borderRadius:14, padding:16, marginBottom:16 }}>
+              <div style={{ display:"flex", gap:8 }}>
+                <input value={newTask[activeSection]}
+                  onChange={e => setNewTask(p => ({ ...p, [activeSection]: e.target.value }))}
+                  onKeyDown={e => e.key==="Enter" && addTask(activeSection)}
+                  placeholder={`New ${currentSection.label.toLowerCase()} task...`}
+                  style={{ flex:1, background:"#080a0f", border:"1px solid #1e2a3a", borderRadius:10, padding:"11px 14px", color:"#dde2f0", fontSize:14, fontFamily:"inherit" }}
+                />
+                <button onClick={() => addTask(activeSection)} style={{ padding:"11px 20px", background:`linear-gradient(135deg,${currentSection.accent}33,${currentSection.accent}55)`, border:`1px solid ${currentSection.accentBorder}`, borderRadius:10, color:currentSection.accent, fontSize:14, fontWeight:700, whiteSpace:"nowrap", fontFamily:"inherit" }}>+ Add</button>
+              </div>
+            </div>
+          )}
+
+          {loading ? (
+            <div style={{ textAlign:"center", padding:"60px 0" }}>
+              <div style={{ width:32, height:32, border:"3px solid #1e2a3a", borderTop:`3px solid ${currentSection.accent}`, borderRadius:"50%", animation:"spin 0.8s linear infinite", margin:"0 auto 12px" }} />
+              <div style={{ color:"#445", fontSize:14 }}>Loading tasks...</div>
+            </div>
+          ) : currentTasks.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"60px 0", border:"1px dashed #1e2a3a", borderRadius:16 }}>
+              <div style={{ fontSize:36, marginBottom:12 }}>{currentSection.emoji}</div>
+              <div style={{ color:"#445", fontSize:14 }}>No tasks yet</div>
+              <div style={{ color:"#334", fontSize:12, marginTop:6 }}>{isAdmin?"Use the field above to add one":"Login as admin to add tasks"}</div>
+            </div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {currentTasks.map((task, idx) => (
+                <div key={task.id} style={{ background:"#0d1117", border:`1px solid ${task.done?currentSection.accentBorder:"#1e2a3a"}`, borderRadius:14, overflow:"hidden", opacity:task.done?0.65:1, transition:"all 0.2s", animation:`fadeUp 0.3s ease ${idx*0.03}s both` }}>
+                  <div style={{ padding:"14px 16px" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                      <button onClick={() => toggleTask(task.id, task.done)} style={{ width:22, height:22, minWidth:22, borderRadius:6, border:`2px solid ${task.done?currentSection.accent:"#2a3040"}`, background:task.done?currentSection.accentDim:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
+                        {task.done && <span style={{ color:currentSection.accent, fontSize:13, fontWeight:900 }}>✓</span>}
+                      </button>
+                      <span style={{ flex:1, fontSize:14, fontWeight:600, textDecoration:task.done?"line-through":"none", color:task.done?"#445":"#dde2f0" }}>{task.text}</span>
+                      {(task.images||[]).length > 0 && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>🖼 {task.images.length}</span>}
+                      {task.notes && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>📝</span>}
+                      <div style={{ display:"flex", gap:6 }}>
+                        <button onClick={() => setExpandedId(expandedId===task.id?null:task.id)} style={{ background:expandedId===task.id?currentSection.accentDim:"#1a1f2e", border:`1px solid ${expandedId===task.id?currentSection.accentBorder:"#1e2a3a"}`, borderRadius:7, padding:"4px 10px", color:expandedId===task.id?currentSection.accent:"#445", fontSize:12, fontFamily:"inherit" }}>{expandedId===task.id?"▲":"▼"}</button>
+                        {isAdmin && <button onClick={() => deleteTask(task.id)} style={{ background:"#1a1010", border:"1px solid #3a1a1a", borderRadius:7, padding:"4px 10px", color:"#ef4444", fontSize:12, fontFamily:"inherit" }}>✕</button>}
+                      </div>
+                    </div>
+                    {task.done && task.done_at && <div style={{ fontSize:11, color:"#334", marginTop:6, paddingLeft:34 }}>✓ Completed {formatDate(task.done_at)}</div>}
+                  </div>
+
+                  {expandedId===task.id && (
+                    <div style={{ borderTop:"1px solid #1e2a3a", padding:16, background:"#080a0f" }}>
+                      <div style={{ marginBottom:14 }}>
+                        <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:6 }}>NOTES</div>
+                        <textarea value={task.notes||""} onChange={e => updateNotes(task.id, e.target.value)} placeholder="Add notes or details..." rows={3}
+                          style={{ width:"100%", background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px", color:"#dde2f0", fontSize:13, resize:"vertical", boxSizing:"border-box", fontFamily:"inherit", lineHeight:1.5 }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:8 }}>SCREENSHOTS ({(task.images||[]).length})</div>
+                        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                          {(task.images||[]).map(img => (
+                            <div key={img.id} style={{ position:"relative" }}>
+                              <img src={img.url} alt={img.name} onClick={() => window.open(img.url,"_blank")} style={{ width:72, height:72, objectFit:"cover", display:"block", border:"1px solid #1e2a3a", borderRadius:8 }} />
+                              <button onClick={() => removeImage(task.id, img.id)} style={{ position:"absolute", top:3, right:3, background:"rgba(0,0,0,0.8)", border:"none", borderRadius:"50%", width:16, height:16, color:"#ef4444", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
+                            </div>
+                          ))}
+                          <label style={{ width:72, height:72, background:"#0d1117", border:`2px dashed ${currentSection.accentBorder}`, borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", color:currentSection.accent, fontSize:20, gap:2 }}>
+                            <span>+</span>
+                            <span style={{ fontSize:9, color:"#445" }}>screen</span>
+                            <input type="file" accept="image/*" style={{ display:"none" }} onChange={e => addImage(task.id, e)} />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.render(<App />, document.getElementById("root"));
+</script>
+</body>
+</html>
