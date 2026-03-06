@@ -17,12 +17,16 @@
     button:hover { filter: brightness(1.15); }
     @keyframes slideIn { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
     @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
     @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    @keyframes zoomIn { from { opacity:0; transform:scale(0.92); } to { opacity:1; transform:scale(1); } }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #080a0f; }
     ::-webkit-scrollbar-thumb { background: #1e2a3a; border-radius: 3px; }
+    .desc-display { white-space: pre-wrap; line-height: 1.7; font-size: 13px; color: #bbc; }
+    .desc-display ol, .desc-display ul { padding-left: 18px; }
   </style>
 </head>
 <body>
@@ -39,40 +43,51 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 function generateId() {
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 }
-
 function formatDate(ts) {
   if (!ts) return "";
-  return new Date(ts).toLocaleDateString("en-GB", {
-    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
-  });
+  return new Date(ts).toLocaleDateString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" });
 }
-
 function normalizeTask(t) {
   return {
     ...t,
-    images:   Array.isArray(t.images)   ? t.images   : [],
-    comments: Array.isArray(t.comments) ? t.comments : [],
-    status:   t.status || "open",
-    notes:    t.notes  || "",
+    images:      Array.isArray(t.images)   ? t.images   : [],
+    comments:    Array.isArray(t.comments) ? t.comments : [],
+    status:      t.status      || "open",
+    notes:       t.notes       || "",
+    description: t.description || "",
   };
 }
 
 const SECTIONS = [
-  { id: "user",  label: "User",  emoji: "👤", accent: "#00d4ff", accentDim: "#00d4ff18", accentBorder: "#00d4ff33", description: "High priority — user experience" },
-  { id: "admin", label: "Admin", emoji: "⚙️", accent: "#a78bfa", accentDim: "#a78bfa18", accentBorder: "#a78bfa33", description: "Normal priority — management panel" }
+  { id:"user",  label:"User",  emoji:"👤", accent:"#00d4ff", accentDim:"#00d4ff18", accentBorder:"#00d4ff33", description:"High priority — user experience" },
+  { id:"admin", label:"Admin", emoji:"⚙️", accent:"#a78bfa", accentDim:"#a78bfa18", accentBorder:"#a78bfa33", description:"Normal priority — management panel" }
 ];
 
 function StatusBadge({ status }) {
   const cfg = {
-    open:    { label: "Open",        bg: "#1e2a3a",   color: "#556",    border: "#2a3a4a", anim: "none" },
-    pending: { label: "⏳ Pending",  bg: "#f59e0b18", color: "#f59e0b", border: "#f59e0b44", anim: "pulse 2s ease infinite" },
-    done:    { label: "✓ Confirmed", bg: "#10b98118", color: "#10b981", border: "#10b98144", anim: "none" },
+    open:    { label:"Open",        bg:"#1e2a3a",   color:"#556",    border:"#2a3a4a", anim:"none" },
+    pending: { label:"⏳ Pending",  bg:"#f59e0b18", color:"#f59e0b", border:"#f59e0b44", anim:"pulse 2s ease infinite" },
+    done:    { label:"✓ Confirmed", bg:"#10b98118", color:"#10b981", border:"#10b98144", anim:"none" },
   };
   const c = cfg[status] || cfg.open;
+  return <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99, background:c.bg, color:c.color, border:`1px solid ${c.border}`, whiteSpace:"nowrap", animation:c.anim }}>{c.label}</span>;
+}
+
+// Lightbox — opens image inline in a modal overlay (Safari safe)
+function Lightbox({ src, name, onClose }) {
+  React.useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   return (
-    <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:99, background:c.bg, color:c.color, border:`1px solid ${c.border}`, whiteSpace:"nowrap", animation:c.anim }}>
-      {c.label}
-    </span>
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.92)", zIndex:99999, display:"flex", alignItems:"center", justifyContent:"center", animation:"fadeIn 0.2s ease", cursor:"zoom-out" }}>
+      <div onClick={e => e.stopPropagation()} style={{ position:"relative", maxWidth:"90vw", maxHeight:"90vh", animation:"zoomIn 0.2s ease" }}>
+        <img src={src} alt={name} style={{ maxWidth:"90vw", maxHeight:"85vh", borderRadius:12, border:"1px solid #2a3a4a", display:"block", objectFit:"contain" }} />
+        <button onClick={onClose} style={{ position:"absolute", top:-14, right:-14, width:32, height:32, borderRadius:"50%", background:"#1a1f2e", border:"1px solid #2a3a4a", color:"#aab", fontSize:18, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>×</button>
+        {name && <div style={{ textAlign:"center", marginTop:8, fontSize:12, color:"#445" }}>{name}</div>}
+      </div>
+    </div>
   );
 }
 
@@ -83,57 +98,55 @@ function App() {
   const [showLogin, setShowLogin]         = React.useState(false);
   const [pwd, setPwd]                     = React.useState("");
   const [pwdError, setPwdError]           = React.useState(false);
-  const [newTask, setNewTask]             = React.useState({ user: "", admin: "" });
+  const [newTask, setNewTask]             = React.useState({ user:"", admin:"" });
   const [expandedId, setExpandedId]       = React.useState(null);
   const [toast, setToast]                 = React.useState(null);
   const [activeSection, setActiveSection] = React.useState("user");
   const [connected, setConnected]         = React.useState(false);
+  const [lightbox, setLightbox]           = React.useState(null); // { src, name }
 
   React.useEffect(() => {
     fetchTasks();
     const channel = supabase
       .channel("tasks-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "tasks" }, payload => {
+      .on("postgres_changes", { event:"*", schema:"public", table:"tasks" }, payload => {
         if (payload.eventType === "INSERT") {
-          const incoming = normalizeTask(payload.new);
-          setTasks(prev => prev.find(t => t.id === incoming.id) ? prev : [incoming, ...prev]);
+          const t = normalizeTask(payload.new);
+          setTasks(prev => prev.find(x => x.id === t.id) ? prev : [t, ...prev]);
         } else if (payload.eventType === "UPDATE") {
-          setTasks(prev => prev.map(t => t.id === payload.new.id ? normalizeTask(payload.new) : t));
+          setTasks(prev => prev.map(x => x.id === payload.new.id ? normalizeTask(payload.new) : x));
         } else if (payload.eventType === "DELETE") {
-          setTasks(prev => prev.filter(t => t.id !== payload.old.id));
+          setTasks(prev => prev.filter(x => x.id !== payload.old.id));
         }
       })
-      .subscribe(status => setConnected(status === "SUBSCRIBED"));
+      .subscribe(s => setConnected(s === "SUBSCRIBED"));
     return () => supabase.removeChannel(channel);
   }, []);
 
   async function fetchTasks() {
     setLoading(true);
-    const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending:false });
     if (!error && data) setTasks(data.map(normalizeTask));
     setLoading(false);
   }
 
-  function showToast(msg, type = "ok") {
+  function showToast(msg, type="ok") {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2800);
   }
 
   function tryLogin() {
     if (pwd === ADMIN_PASSWORD) {
-      setIsAdmin(true);
-      sessionStorage.setItem(SESSION_KEY, "true");
+      setIsAdmin(true); sessionStorage.setItem(SESSION_KEY,"true");
       setShowLogin(false); setPwd(""); setPwdError(false);
       showToast("Admin access granted 👑");
     } else {
-      setPwdError(true);
-      setTimeout(() => setPwdError(false), 1000);
+      setPwdError(true); setTimeout(() => setPwdError(false), 1000);
     }
   }
 
   function logout() {
-    setIsAdmin(false);
-    sessionStorage.removeItem(SESSION_KEY);
+    setIsAdmin(false); sessionStorage.removeItem(SESSION_KEY);
     showToast("Logged out");
   }
 
@@ -145,12 +158,12 @@ function App() {
     if (!isAdmin) return;
     const text = newTask[section].trim();
     if (!text) return;
-    const task = normalizeTask({ id: generateId(), section, text, status: "open", created_at: Date.now(), done_at: null, notes: "", images: [], comments: [] });
+    const task = normalizeTask({ id:generateId(), section, text, status:"open", created_at:Date.now(), done_at:null, notes:"", description:"", images:[], comments:[] });
     setTasks(prev => [task, ...prev]);
-    setNewTask(p => ({ ...p, [section]: "" }));
+    setNewTask(p => ({ ...p, [section]:"" }));
     const { error } = await supabase.from("tasks").insert([task]);
-    if (error) { setTasks(prev => prev.filter(t => t.id !== task.id)); showToast("Error: " + error.message, "warn"); return; }
-    showToast("Task added!");
+    if (error) { setTasks(prev => prev.filter(t => t.id !== task.id)); showToast("Error: " + error.message, "warn"); }
+    else showToast("Task added!");
   }
 
   async function deleteTask(id) {
@@ -158,51 +171,57 @@ function App() {
     setTasks(prev => prev.filter(t => t.id !== id));
     if (expandedId === id) setExpandedId(null);
     const { error } = await supabase.from("tasks").delete().eq("id", id);
-    if (error) { showToast("Error deleting task", "warn"); fetchTasks(); }
+    if (error) { showToast("Error deleting", "warn"); fetchTasks(); }
     else showToast("Task deleted", "warn");
   }
 
   async function requestComplete(id) {
-    optimistic(id, { status: "pending" });
-    const { error } = await supabase.from("tasks").update({ status: "pending" }).eq("id", id);
-    if (error) { showToast("Error updating task", "warn"); optimistic(id, { status: "open" }); return; }
+    optimistic(id, { status:"pending" });
+    const { error } = await supabase.from("tasks").update({ status:"pending" }).eq("id", id);
+    if (error) { showToast("Error", "warn"); optimistic(id, { status:"open" }); return; }
     showToast("Submitted for approval ⏳");
   }
 
   async function undoPending(id) {
-    optimistic(id, { status: "open" });
-    await supabase.from("tasks").update({ status: "open" }).eq("id", id);
+    optimistic(id, { status:"open" });
+    await supabase.from("tasks").update({ status:"open" }).eq("id", id);
     showToast("Request cancelled");
   }
 
   async function confirmDone(id) {
     if (!isAdmin) return;
     const now = Date.now();
-    optimistic(id, { status: "done", done_at: now });
-    const { error } = await supabase.from("tasks").update({ status: "done", done_at: now }).eq("id", id);
-    if (error) { showToast("Error confirming task", "warn"); return; }
+    optimistic(id, { status:"done", done_at:now });
+    await supabase.from("tasks").update({ status:"done", done_at:now }).eq("id", id);
     showToast("Task confirmed complete ✓");
   }
 
   async function reopenTask(id) {
     if (!isAdmin) return;
-    optimistic(id, { status: "open", done_at: null });
-    await supabase.from("tasks").update({ status: "open", done_at: null }).eq("id", id);
+    optimistic(id, { status:"open", done_at:null });
+    await supabase.from("tasks").update({ status:"open", done_at:null }).eq("id", id);
     showToast("Task reopened");
+  }
+
+  async function saveDescription(id, description) {
+    if (!isAdmin) return;
+    optimistic(id, { description });
+    await supabase.from("tasks").update({ description }).eq("id", id);
+  }
+
+  async function saveNotes(id, notes) {
+    if (!isAdmin) return;
+    optimistic(id, { notes });
+    await supabase.from("tasks").update({ notes }).eq("id", id);
   }
 
   async function addComment(id, text, isAdminAuthor) {
     if (!text.trim()) return;
     const task = tasks.find(t => t.id === id);
-    const comments = [...(task.comments || []), { id: generateId(), text: text.trim(), author: isAdminAuthor ? "Admin" : "User", ts: Date.now() }];
+    const comments = [...(task.comments||[]), { id:generateId(), text:text.trim(), author:isAdminAuthor?"Admin":"User", ts:Date.now() }];
     optimistic(id, { comments });
     const { error } = await supabase.from("tasks").update({ comments }).eq("id", id);
     if (error) showToast("Error posting comment", "warn");
-  }
-
-  async function updateNotes(id, notes) {
-    optimistic(id, { notes });
-    await supabase.from("tasks").update({ notes }).eq("id", id);
   }
 
   async function addImage(id, e) {
@@ -213,10 +232,10 @@ function App() {
     const task = tasks.find(t => t.id === id);
     const reader = new FileReader();
     reader.onload = async ev => {
-      const images = [...(task.images || []), { id: generateId(), url: ev.target.result, name: file.name }];
+      const images = [...(task.images||[]), { id:generateId(), url:ev.target.result, name:file.name }];
       optimistic(id, { images });
       const { error } = await supabase.from("tasks").update({ images }).eq("id", id);
-      if (error) showToast("Error uploading screenshot", "warn");
+      if (error) showToast("Error uploading", "warn");
       else showToast("Screenshot added!");
     };
     reader.readAsDataURL(file);
@@ -225,7 +244,7 @@ function App() {
   async function removeImage(taskId, imgId) {
     if (!isAdmin) return;
     const task = tasks.find(t => t.id === taskId);
-    const images = (task.images || []).filter(i => i.id !== imgId);
+    const images = (task.images||[]).filter(i => i.id !== imgId);
     optimistic(taskId, { images });
     await supabase.from("tasks").update({ images }).eq("id", taskId);
   }
@@ -234,7 +253,7 @@ function App() {
   const currentTasks   = tasks.filter(t => t.section === activeSection);
   const doneCount      = currentTasks.filter(t => t.status === "done").length;
   const pendingCount   = currentTasks.filter(t => t.status === "pending").length;
-  const pct            = currentTasks.length ? Math.round((doneCount / currentTasks.length) * 100) : 0;
+  const pct            = currentTasks.length ? Math.round((doneCount/currentTasks.length)*100) : 0;
   const userTasks      = tasks.filter(t => t.section === "user");
   const adminTasks     = tasks.filter(t => t.section === "admin");
 
@@ -242,6 +261,8 @@ function App() {
     <div style={{ minHeight:"100vh", background:"#080a0f", fontFamily:"'Sora','Segoe UI',sans-serif", color:"#dde2f0", position:"relative", overflow:"hidden" }}>
       <div style={{ position:"fixed", inset:0, zIndex:0, backgroundImage:`linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px)`, backgroundSize:"40px 40px" }} />
       <div style={{ position:"fixed", top:-200, left:"50%", transform:"translateX(-50%)", width:600, height:400, borderRadius:"50%", background:`radial-gradient(ellipse,${currentSection.accent}12 0%,transparent 70%)`, zIndex:0, transition:"background 0.6s ease", pointerEvents:"none" }} />
+
+      {lightbox && <Lightbox src={lightbox.src} name={lightbox.name} onClose={() => setLightbox(null)} />}
 
       {toast && (
         <div style={{ position:"fixed", top:20, right:20, zIndex:9999, background:toast.type==="warn"?"#ef444420":"#00d4ff18", border:`1px solid ${toast.type==="warn"?"#ef4444":"#00d4ff44"}`, color:toast.type==="warn"?"#ef4444":"#00d4ff", padding:"10px 18px", borderRadius:10, fontWeight:600, fontSize:13, backdropFilter:"blur(10px)", animation:"slideIn 0.3s ease", maxWidth:360 }}>{toast.msg}</div>
@@ -253,11 +274,8 @@ function App() {
             <div style={{ fontSize:28, marginBottom:6 }}>🔐</div>
             <div style={{ fontSize:18, fontWeight:800, marginBottom:4 }}>Admin Access</div>
             <div style={{ fontSize:13, color:"#556", marginBottom:20 }}>NixFunding team only</div>
-            <input type="password" placeholder="Password..." value={pwd}
-              onChange={e => setPwd(e.target.value)}
-              onKeyDown={e => e.key==="Enter" && tryLogin()} autoFocus
-              style={{ width:"100%", background:"#080a0f", border:`1px solid ${pwdError?"#ef4444":"#1e2a3a"}`, borderRadius:10, padding:"12px 14px", color:"#dde2f0", fontSize:15, marginBottom:14, boxSizing:"border-box", fontFamily:"inherit", animation:pwdError?"shake 0.3s ease":"none" }}
-            />
+            <input type="password" placeholder="Password..." value={pwd} onChange={e => setPwd(e.target.value)} onKeyDown={e => e.key==="Enter" && tryLogin()} autoFocus
+              style={{ width:"100%", background:"#080a0f", border:`1px solid ${pwdError?"#ef4444":"#1e2a3a"}`, borderRadius:10, padding:"12px 14px", color:"#dde2f0", fontSize:15, marginBottom:14, boxSizing:"border-box", fontFamily:"inherit", animation:pwdError?"shake 0.3s ease":"none" }} />
             <div style={{ display:"flex", gap:8 }}>
               <button onClick={() => { setShowLogin(false); setPwd(""); }} style={{ flex:1, padding:12, background:"#1a1f2e", border:"1px solid #1e2a3a", borderRadius:10, color:"#778", fontWeight:600, fontSize:14, fontFamily:"inherit" }}>Cancel</button>
               <button onClick={tryLogin} style={{ flex:1, padding:12, background:"linear-gradient(135deg,#00d4ff22,#00d4ff44)", border:"1px solid #00d4ff44", borderRadius:10, color:"#00d4ff", fontWeight:700, fontSize:14, fontFamily:"inherit" }}>Login</button>
@@ -325,7 +343,7 @@ function App() {
               <div style={{ fontSize:11, color:currentSection.accent, fontWeight:700, letterSpacing:1, marginBottom:8 }}>+ NEW TASK</div>
               <div style={{ display:"flex", gap:8 }}>
                 <input value={newTask[activeSection]}
-                  onChange={e => setNewTask(p => ({ ...p, [activeSection]: e.target.value }))}
+                  onChange={e => setNewTask(p => ({ ...p, [activeSection]:e.target.value }))}
                   onKeyDown={e => e.key==="Enter" && addTask(activeSection)}
                   placeholder={`New ${currentSection.label.toLowerCase()} task...`}
                   style={{ flex:1, background:"#080a0f", border:"1px solid #1e2a3a", borderRadius:10, padding:"11px 14px", color:"#dde2f0", fontSize:14, fontFamily:"inherit" }}
@@ -357,10 +375,12 @@ function App() {
                   onUndoPending={() => undoPending(task.id)}
                   onConfirmDone={() => confirmDone(task.id)}
                   onReopen={() => reopenTask(task.id)}
-                  onUpdateNotes={notes => updateNotes(task.id, notes)}
-                  onAddComment={(text) => addComment(task.id, text, isAdmin)}
+                  onSaveDescription={desc => saveDescription(task.id, desc)}
+                  onSaveNotes={notes => saveNotes(task.id, notes)}
+                  onAddComment={text => addComment(task.id, text, isAdmin)}
                   onAddImage={e => addImage(task.id, e)}
                   onRemoveImage={imgId => removeImage(task.id, imgId)}
+                  onOpenLightbox={setLightbox}
                 />
               ))}
             </div>
@@ -371,12 +391,20 @@ function App() {
   );
 }
 
-function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDelete, onRequestComplete, onUndoPending, onConfirmDone, onReopen, onUpdateNotes, onAddComment, onAddImage, onRemoveImage }) {
-  const [commentText, setCommentText] = React.useState("");
+function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDelete, onRequestComplete, onUndoPending, onConfirmDone, onReopen, onSaveDescription, onSaveNotes, onAddComment, onAddImage, onRemoveImage, onOpenLightbox }) {
+  const [commentText, setCommentText]     = React.useState("");
+  const [editingDesc, setEditingDesc]     = React.useState(false);
+  const [descDraft, setDescDraft]         = React.useState(task.description || "");
+  const [notesDraft, setNotesDraft]       = React.useState(task.notes || "");
+
+  // Keep drafts in sync if task updates from realtime
+  React.useEffect(() => { if (!editingDesc) setDescDraft(task.description || ""); }, [task.description]);
+  React.useEffect(() => { setNotesDraft(task.notes || ""); }, [task.notes]);
 
   const isDone    = task.status === "done";
   const isPending = task.status === "pending";
-  const hasImages = (task.images || []).length > 0;
+  const hasImages = (task.images||[]).length > 0;
+  const hasDesc   = (task.description||"").trim().length > 0;
 
   function submitComment() {
     if (!commentText.trim()) return;
@@ -384,39 +412,41 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
     setCommentText("");
   }
 
+  function saveDesc() {
+    onSaveDescription(descDraft);
+    setEditingDesc(false);
+  }
+
   function CheckControl() {
-    if (isDone) {
-      return (
-        <button onClick={isAdmin ? onReopen : undefined} title={isAdmin ? "Click to reopen" : "Confirmed complete"}
-          style={{ width:22, height:22, borderRadius:6, border:`2px solid ${section.accent}`, background:section.accentDim, display:"flex", alignItems:"center", justifyContent:"center", cursor:isAdmin?"pointer":"default" }}>
-          <span style={{ color:section.accent, fontSize:13, fontWeight:900 }}>✓</span>
-        </button>
-      );
-    }
-    if (isPending) {
-      return isAdmin ? (
-        <button onClick={onConfirmDone} title="Confirm completion"
-          style={{ width:22, height:22, borderRadius:6, border:"2px solid #f59e0b", background:"#f59e0b22", display:"flex", alignItems:"center", justifyContent:"center", animation:"pulse 1.5s ease infinite" }}>
-          <span style={{ color:"#f59e0b", fontSize:10, fontWeight:900 }}>✓?</span>
-        </button>
-      ) : (
-        <button onClick={onUndoPending} title="Cancel completion request"
-          style={{ width:22, height:22, borderRadius:6, border:"2px solid #f59e0b", background:"#f59e0b22", display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <span style={{ fontSize:12 }}>⏳</span>
-        </button>
-      );
-    }
+    if (isDone) return (
+      <button onClick={isAdmin ? onReopen : undefined} title={isAdmin?"Click to reopen":"Confirmed complete"}
+        style={{ width:22, height:22, borderRadius:6, border:`2px solid ${section.accent}`, background:section.accentDim, display:"flex", alignItems:"center", justifyContent:"center", cursor:isAdmin?"pointer":"default" }}>
+        <span style={{ color:section.accent, fontSize:13, fontWeight:900 }}>✓</span>
+      </button>
+    );
+    if (isPending) return isAdmin ? (
+      <button onClick={onConfirmDone} title="Confirm completion"
+        style={{ width:22, height:22, borderRadius:6, border:"2px solid #f59e0b", background:"#f59e0b22", display:"flex", alignItems:"center", justifyContent:"center", animation:"pulse 1.5s ease infinite" }}>
+        <span style={{ color:"#f59e0b", fontSize:10, fontWeight:900 }}>✓?</span>
+      </button>
+    ) : (
+      <button onClick={onUndoPending} title="Cancel request"
+        style={{ width:22, height:22, borderRadius:6, border:"2px solid #f59e0b", background:"#f59e0b22", display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <span style={{ fontSize:12 }}>⏳</span>
+      </button>
+    );
     return (
       <button onClick={onRequestComplete} title="Mark as completed"
         style={{ width:22, height:22, borderRadius:6, border:"2px solid #2a3040", background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"border-color 0.15s" }}
         onMouseEnter={e => e.currentTarget.style.borderColor="#00d4ff55"}
-        onMouseLeave={e => e.currentTarget.style.borderColor="#2a3040"}>
-      </button>
+        onMouseLeave={e => e.currentTarget.style.borderColor="#2a3040"} />
     );
   }
 
   return (
-    <div style={{ background:"#0d1117", border:`1px solid ${isDone ? section.accentBorder : isPending ? "#f59e0b44" : "#1e2a3a"}`, borderRadius:14, overflow:"hidden", opacity: isDone ? 0.75 : 1, transition:"all 0.2s", animation:`fadeUp 0.3s ease ${idx*0.03}s both` }}>
+    <div style={{ background:"#0d1117", border:`1px solid ${isDone?section.accentBorder:isPending?"#f59e0b44":"#1e2a3a"}`, borderRadius:14, overflow:"hidden", opacity:isDone?0.8:1, transition:"all 0.2s", animation:`fadeUp 0.3s ease ${idx*0.03}s both` }}>
+
+      {/* Task row */}
       <div style={{ padding:"14px 16px" }}>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
           <CheckControl />
@@ -424,52 +454,72 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
           <StatusBadge status={task.status} />
           {hasImages && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>🖼 {task.images.length}</span>}
           {(task.comments||[]).length > 0 && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>💬 {task.comments.length}</span>}
-          {isAdmin && task.notes && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>📝</span>}
+          {hasDesc && <span style={{ fontSize:11, padding:"2px 8px", borderRadius:99, background:"#1e2a3a", color:"#556" }}>📋</span>}
           <div style={{ display:"flex", gap:6 }}>
             <button onClick={onToggleExpand} style={{ background:expanded?section.accentDim:"#1a1f2e", border:`1px solid ${expanded?section.accentBorder:"#1e2a3a"}`, borderRadius:7, padding:"4px 10px", color:expanded?section.accent:"#445", fontSize:12, fontFamily:"inherit" }}>{expanded?"▲":"▼"}</button>
             {isAdmin && <button onClick={onDelete} style={{ background:"#1a1010", border:"1px solid #3a1a1a", borderRadius:7, padding:"4px 10px", color:"#ef4444", fontSize:12, fontFamily:"inherit" }}>✕</button>}
           </div>
         </div>
         {isDone && task.done_at && <div style={{ fontSize:11, color:"#10b981", marginTop:6, paddingLeft:34 }}>✓ Confirmed complete {formatDate(task.done_at)}</div>}
-        {isPending && <div style={{ fontSize:11, color:"#f59e0b", marginTop:6, paddingLeft:34 }}>{isAdmin ? "⏳ Awaiting your confirmation — click ✓? to confirm" : "⏳ Submitted for approval — waiting for admin"}</div>}
+        {isPending && <div style={{ fontSize:11, color:"#f59e0b", marginTop:6, paddingLeft:34 }}>{isAdmin?"⏳ Awaiting your confirmation — click ✓? to confirm":"⏳ Submitted for approval — waiting for admin"}</div>}
       </div>
 
+      {/* Expanded panel */}
       {expanded && (
-        <div style={{ borderTop:"1px solid #1e2a3a", padding:16, background:"#080a0f" }}>
+        <div style={{ borderTop:"1px solid #1e2a3a", background:"#080a0f" }}>
 
-          {/* Admin-only: notes */}
-          {isAdmin && (
-            <div style={{ marginBottom:16 }}>
-              <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:6 }}>NOTES (admin only)</div>
-              <textarea value={task.notes||""} onChange={e => onUpdateNotes(e.target.value)} placeholder="Add internal notes..." rows={2}
-                style={{ width:"100%", background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px", color:"#dde2f0", fontSize:13, resize:"vertical", boxSizing:"border-box", fontFamily:"inherit", lineHeight:1.5 }} />
+          {/* ── DESCRIPTION — visible to everyone ── */}
+          <div style={{ padding:"16px 16px 0" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+              <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1 }}>DESCRIPTION</div>
+              {isAdmin && !editingDesc && (
+                <button onClick={() => setEditingDesc(true)} style={{ fontSize:11, padding:"3px 10px", background:section.accentDim, border:`1px solid ${section.accentBorder}`, borderRadius:6, color:section.accent, fontFamily:"inherit", fontWeight:600 }}>✏️ Edit</button>
+              )}
             </div>
-          )}
 
-          {/* Screenshots — everyone can VIEW, only admin can add/remove */}
-          {(isAdmin || hasImages) && (
-            <div style={{ marginBottom:16 }}>
-              <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:8 }}>
-                SCREENSHOTS ({(task.images||[]).length})
+            {isAdmin && editingDesc ? (
+              <div>
+                <textarea value={descDraft} onChange={e => setDescDraft(e.target.value)}
+                  placeholder={"Describe this task in detail...\n\nExample:\n1. Select Country should include all countries worldwide\n2. Phone prefix isn't selectable\n3. Sign Up with Google doesn't match our style"}
+                  rows={6}
+                  style={{ width:"100%", background:"#0d1117", border:`1px solid ${section.accentBorder}`, borderRadius:10, padding:"10px 12px", color:"#dde2f0", fontSize:13, resize:"vertical", boxSizing:"border-box", fontFamily:"inherit", lineHeight:1.7 }}
+                />
+                <div style={{ display:"flex", gap:8, marginTop:8 }}>
+                  <button onClick={saveDesc} style={{ padding:"8px 18px", background:`linear-gradient(135deg,${section.accent}33,${section.accent}55)`, border:`1px solid ${section.accentBorder}`, borderRadius:8, color:section.accent, fontSize:13, fontWeight:700, fontFamily:"inherit" }}>💾 Save</button>
+                  <button onClick={() => { setDescDraft(task.description||""); setEditingDesc(false); }} style={{ padding:"8px 14px", background:"#1a1f2e", border:"1px solid #1e2a3a", borderRadius:8, color:"#556", fontSize:13, fontFamily:"inherit" }}>Cancel</button>
+                </div>
               </div>
+            ) : hasDesc ? (
+              <div style={{ background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"12px 14px" }}>
+                <pre className="desc-display">{task.description}</pre>
+              </div>
+            ) : (
+              <div style={{ fontSize:12, color:"#334", fontStyle:"italic", padding:"8px 0" }}>
+                {isAdmin ? "No description yet — click Edit to add one." : "No description added yet."}
+              </div>
+            )}
+          </div>
+
+          {/* ── SCREENSHOTS — everyone views, admin uploads ── */}
+          {(isAdmin || hasImages) && (
+            <div style={{ padding:"16px 16px 0" }}>
+              <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:8 }}>SCREENSHOTS ({(task.images||[]).length})</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
                 {(task.images||[]).map(img => (
                   <div key={img.id} style={{ position:"relative" }}>
-                    <img src={img.url} alt={img.name} onClick={() => window.open(img.url,"_blank")}
-                      style={{ width:80, height:80, objectFit:"cover", display:"block", border:"1px solid #1e2a3a", borderRadius:8, cursor:"pointer" }}
-                      title="Click to open full size"
+                    <img src={img.url} alt={img.name}
+                      onClick={() => onOpenLightbox({ src:img.url, name:img.name })}
+                      style={{ width:80, height:80, objectFit:"cover", display:"block", border:"1px solid #1e2a3a", borderRadius:8, cursor:"zoom-in" }}
+                      title="Click to view full size"
                     />
-                    {/* Only admin sees the remove button */}
                     {isAdmin && (
                       <button onClick={() => onRemoveImage(img.id)} style={{ position:"absolute", top:3, right:3, background:"rgba(0,0,0,0.85)", border:"none", borderRadius:"50%", width:18, height:18, color:"#ef4444", fontSize:11, display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
                     )}
                   </div>
                 ))}
-                {/* Only admin sees the upload button */}
                 {isAdmin && (
                   <label style={{ width:80, height:80, background:"#0d1117", border:`2px dashed ${section.accentBorder}`, borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", color:section.accent, fontSize:22, gap:2 }}>
-                    <span>+</span>
-                    <span style={{ fontSize:9, color:"#445" }}>upload</span>
+                    <span>+</span><span style={{ fontSize:9, color:"#445" }}>upload</span>
                     <input type="file" accept="image/*" style={{ display:"none" }} onChange={onAddImage} />
                   </label>
                 )}
@@ -477,22 +527,30 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
             </div>
           )}
 
-          {/* Divider between admin section and comments */}
-          {isAdmin && <div style={{ height:1, background:"#1e2a3a", marginBottom:16 }} />}
+          {/* ── ADMIN NOTES — private ── */}
+          {isAdmin && (
+            <div style={{ padding:"16px 16px 0" }}>
+              <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:6 }}>INTERNAL NOTES (admin only)</div>
+              <textarea value={notesDraft} onChange={e => { setNotesDraft(e.target.value); onSaveNotes(e.target.value); }}
+                placeholder="Private notes for the team..."
+                rows={2}
+                style={{ width:"100%", background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px", color:"#dde2f0", fontSize:13, resize:"vertical", boxSizing:"border-box", fontFamily:"inherit", lineHeight:1.5 }}
+              />
+            </div>
+          )}
 
-          {/* Comments — everyone */}
-          <div>
+          {/* Divider */}
+          <div style={{ height:1, background:"#1e2a3a", margin:"16px 0 0" }} />
+
+          {/* ── COMMENTS — everyone ── */}
+          <div style={{ padding:"16px" }}>
             <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:10 }}>COMMENTS ({(task.comments||[]).length})</div>
-            {(task.comments||[]).length === 0 && (
-              <div style={{ fontSize:12, color:"#334", marginBottom:12 }}>No comments yet.</div>
-            )}
+            {(task.comments||[]).length === 0 && <div style={{ fontSize:12, color:"#334", marginBottom:12 }}>No comments yet.</div>}
             <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
               {(task.comments||[]).map(c => (
                 <div key={c.id} style={{ background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px" }}>
                   <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                    <span style={{ fontSize:12, fontWeight:700, color: c.author==="Admin" ? section.accent : "#aab" }}>
-                      {c.author==="Admin" ? "👑 Admin" : "👤 User"}
-                    </span>
+                    <span style={{ fontSize:12, fontWeight:700, color:c.author==="Admin"?section.accent:"#aab" }}>{c.author==="Admin"?"👑 Admin":"👤 User"}</span>
                     <span style={{ fontSize:11, color:"#334" }}>{formatDate(c.ts)}</span>
                   </div>
                   <div style={{ fontSize:13, color:"#ccd", lineHeight:1.5 }}>{c.text}</div>
@@ -500,9 +558,7 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
               ))}
             </div>
             <div style={{ display:"flex", gap:6 }}>
-              <input
-                placeholder={isAdmin ? "Reply as Admin..." : "Write a comment..."}
-                value={commentText}
+              <input placeholder={isAdmin?"Reply as Admin...":"Write a comment..."} value={commentText}
                 onChange={e => setCommentText(e.target.value)}
                 onKeyDown={e => e.key==="Enter" && submitComment()}
                 style={{ flex:1, background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:8, padding:"9px 12px", color:"#dde2f0", fontSize:13, fontFamily:"inherit" }}
@@ -510,6 +566,7 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
               <button onClick={submitComment} style={{ padding:"9px 16px", background:`linear-gradient(135deg,${section.accent}33,${section.accent}55)`, border:`1px solid ${section.accentBorder}`, borderRadius:8, color:section.accent, fontSize:13, fontWeight:700, fontFamily:"inherit", whiteSpace:"nowrap" }}>Send</button>
             </div>
           </div>
+
         </div>
       )}
     </div>
