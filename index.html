@@ -55,9 +55,9 @@ const SECTIONS = [
 
 function StatusBadge({ status }) {
   const cfg = {
-    open:    { label: "Open",         bg: "#1e2a3a",   color: "#556",    border: "#2a3a4a", anim: "none" },
-    pending: { label: "⏳ Pending",   bg: "#f59e0b18", color: "#f59e0b", border: "#f59e0b44", anim: "pulse 2s ease infinite" },
-    done:    { label: "✓ Confirmed",  bg: "#10b98118", color: "#10b981", border: "#10b98144", anim: "none" },
+    open:    { label: "Open",        bg: "#1e2a3a",   color: "#556",    border: "#2a3a4a", anim: "none" },
+    pending: { label: "⏳ Pending",  bg: "#f59e0b18", color: "#f59e0b", border: "#f59e0b44", anim: "pulse 2s ease infinite" },
+    done:    { label: "✓ Confirmed", bg: "#10b98118", color: "#10b981", border: "#10b98144", anim: "none" },
   };
   const c = cfg[status] || cfg.open;
   return (
@@ -123,9 +123,22 @@ function App() {
     if (!isAdmin) return;
     const text = newTask[section].trim();
     if (!text) return;
-    const task = { id: generateId(), section, text, status: "open", created_at: Date.now(), done_at: null, notes: "", images: [], comments: [] };
+    const task = {
+      id: generateId(),
+      section,
+      text,
+      status: "open",
+      created_at: Date.now(),
+      done_at: null,
+      notes: "",
+      images: [],
+      comments: []
+    };
     const { error } = await supabase.from("tasks").insert([task]);
-    if (error) { showToast("Error adding task", "warn"); return; }
+    if (error) {
+      showToast("Error adding task: " + error.message, "warn");
+      return;
+    }
     setNewTask(p => ({ ...p, [section]: "" }));
     showToast("Task added!");
   }
@@ -167,12 +180,18 @@ function App() {
     showToast("Task reopened");
   }
 
-  async function addComment(id, text, author) {
+  async function addComment(id, text, isAdminAuthor) {
     if (!text.trim()) return;
     const task = tasks.find(t => t.id === id);
-    const comments = [...(task.comments || []), { id: generateId(), text: text.trim(), author, ts: Date.now() }];
+    const comments = [...(task.comments || []), {
+      id: generateId(),
+      text: text.trim(),
+      author: isAdminAuthor ? "Admin" : "User",
+      ts: Date.now()
+    }];
     optimistic(id, { comments });
-    await supabase.from("tasks").update({ comments }).eq("id", id);
+    const { error } = await supabase.from("tasks").update({ comments }).eq("id", id);
+    if (error) showToast("Error posting comment", "warn");
   }
 
   async function updateNotes(id, notes) {
@@ -218,7 +237,7 @@ function App() {
       <div style={{ position:"fixed", top:-200, left:"50%", transform:"translateX(-50%)", width:600, height:400, borderRadius:"50%", background:`radial-gradient(ellipse,${currentSection.accent}12 0%,transparent 70%)`, zIndex:0, transition:"background 0.6s ease", pointerEvents:"none" }} />
 
       {toast && (
-        <div style={{ position:"fixed", top:20, right:20, zIndex:9999, background:toast.type==="warn"?"#ef444420":"#00d4ff18", border:`1px solid ${toast.type==="warn"?"#ef4444":"#00d4ff44"}`, color:toast.type==="warn"?"#ef4444":"#00d4ff", padding:"10px 18px", borderRadius:10, fontWeight:600, fontSize:13, backdropFilter:"blur(10px)", animation:"slideIn 0.3s ease" }}>{toast.msg}</div>
+        <div style={{ position:"fixed", top:20, right:20, zIndex:9999, background:toast.type==="warn"?"#ef444420":"#00d4ff18", border:`1px solid ${toast.type==="warn"?"#ef4444":"#00d4ff44"}`, color:toast.type==="warn"?"#ef4444":"#00d4ff", padding:"10px 18px", borderRadius:10, fontWeight:600, fontSize:13, backdropFilter:"blur(10px)", animation:"slideIn 0.3s ease", maxWidth:340 }}>{toast.msg}</div>
       )}
 
       {showLogin && (
@@ -332,7 +351,7 @@ function App() {
                   onConfirmDone={() => confirmDone(task.id)}
                   onReopen={() => reopenTask(task.id)}
                   onUpdateNotes={notes => updateNotes(task.id, notes)}
-                  onAddComment={(text, author) => addComment(task.id, text, author)}
+                  onAddComment={(text) => addComment(task.id, text, isAdmin)}
                   onAddImage={e => addImage(task.id, e)}
                   onRemoveImage={imgId => removeImage(task.id, imgId)}
                 />
@@ -347,23 +366,20 @@ function App() {
 
 function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDelete, onRequestComplete, onUndoPending, onConfirmDone, onReopen, onUpdateNotes, onAddComment, onAddImage, onRemoveImage }) {
   const [commentText, setCommentText] = React.useState("");
-  const [authorName, setAuthorName]   = React.useState("");
 
   const isDone    = task.status === "done";
   const isPending = task.status === "pending";
 
   function submitComment() {
     if (!commentText.trim()) return;
-    const author = isAdmin ? "Admin" : (authorName.trim() || "User");
-    onAddComment(commentText, author);
+    onAddComment(commentText);
     setCommentText("");
   }
 
-  // Checkbox area: shows different control based on role + status
   function CheckControl() {
     if (isDone) {
       return (
-        <button onClick={isAdmin ? onReopen : undefined} title={isAdmin ? "Click to reopen" : ""}
+        <button onClick={isAdmin ? onReopen : undefined} title={isAdmin ? "Click to reopen" : "Confirmed complete"}
           style={{ width:22, height:22, borderRadius:6, border:`2px solid ${section.accent}`, background:section.accentDim, display:"flex", alignItems:"center", justifyContent:"center", cursor:isAdmin?"pointer":"default" }}>
           <span style={{ color:section.accent, fontSize:13, fontWeight:900 }}>✓</span>
         </button>
@@ -382,10 +398,11 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
         </button>
       );
     }
-    // open
     return (
       <button onClick={onRequestComplete} title="Mark as completed"
-        style={{ width:22, height:22, borderRadius:6, border:"2px solid #2a3040", background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
+        style={{ width:22, height:22, borderRadius:6, border:"2px solid #2a3040", background:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"border-color 0.15s" }}
+        onMouseEnter={e => e.currentTarget.style.borderColor="#00d4ff55"}
+        onMouseLeave={e => e.currentTarget.style.borderColor="#2a3040"}>
       </button>
     );
   }
@@ -406,7 +423,7 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
           </div>
         </div>
         {isDone && task.done_at && <div style={{ fontSize:11, color:"#10b981", marginTop:6, paddingLeft:34 }}>✓ Confirmed complete {formatDate(task.done_at)}</div>}
-        {isPending && <div style={{ fontSize:11, color:"#f59e0b", marginTop:6, paddingLeft:34 }}>{isAdmin ? "⏳ Awaiting your confirmation — click ✓? to confirm" : "⏳ Marked as done — waiting for admin confirmation"}</div>}
+        {isPending && <div style={{ fontSize:11, color:"#f59e0b", marginTop:6, paddingLeft:34 }}>{isAdmin ? "⏳ Awaiting your confirmation — click ✓? to confirm" : "⏳ Submitted for approval — waiting for admin"}</div>}
       </div>
 
       {expanded && (
@@ -439,33 +456,35 @@ function TaskCard({ task, idx, isAdmin, section, expanded, onToggleExpand, onDel
             </>
           )}
 
-          {/* Comments — everyone */}
+          {/* Comments — visible to everyone */}
           <div>
             <div style={{ fontSize:11, color:"#445", fontWeight:700, letterSpacing:1, marginBottom:10 }}>COMMENTS ({(task.comments||[]).length})</div>
-            {(task.comments||[]).length === 0 && <div style={{ fontSize:12, color:"#334", marginBottom:10 }}>No comments yet.</div>}
+            {(task.comments||[]).length === 0 && (
+              <div style={{ fontSize:12, color:"#334", marginBottom:12 }}>No comments yet.</div>
+            )}
             <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
               {(task.comments||[]).map(c => (
                 <div key={c.id} style={{ background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:10, padding:"10px 12px" }}>
                   <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                    <span style={{ fontSize:12, fontWeight:700, color: c.author==="Admin" ? section.accent : "#aab" }}>{c.author==="Admin" ? "👑 Admin" : `👤 ${c.author}`}</span>
+                    <span style={{ fontSize:12, fontWeight:700, color: c.author==="Admin" ? section.accent : "#aab" }}>
+                      {c.author==="Admin" ? "👑 Admin" : "👤 User"}
+                    </span>
                     <span style={{ fontSize:11, color:"#334" }}>{formatDate(c.ts)}</span>
                   </div>
                   <div style={{ fontSize:13, color:"#ccd", lineHeight:1.5 }}>{c.text}</div>
                 </div>
               ))}
             </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              {!isAdmin && (
-                <input placeholder="Your name (optional)..." value={authorName} onChange={e => setAuthorName(e.target.value)}
-                  style={{ background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:8, padding:"8px 12px", color:"#dde2f0", fontSize:13, fontFamily:"inherit" }} />
-              )}
-              <div style={{ display:"flex", gap:6 }}>
-                <input placeholder="Write a comment..." value={commentText}
-                  onChange={e => setCommentText(e.target.value)}
-                  onKeyDown={e => e.key==="Enter" && submitComment()}
-                  style={{ flex:1, background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:8, padding:"8px 12px", color:"#dde2f0", fontSize:13, fontFamily:"inherit" }} />
-                <button onClick={submitComment} style={{ padding:"8px 16px", background:`linear-gradient(135deg,${section.accent}33,${section.accent}55)`, border:`1px solid ${section.accentBorder}`, borderRadius:8, color:section.accent, fontSize:13, fontWeight:700, fontFamily:"inherit" }}>Send</button>
-              </div>
+            {/* Comment input — no name field */}
+            <div style={{ display:"flex", gap:6 }}>
+              <input
+                placeholder={isAdmin ? "Reply as Admin..." : "Write a comment..."}
+                value={commentText}
+                onChange={e => setCommentText(e.target.value)}
+                onKeyDown={e => e.key==="Enter" && submitComment()}
+                style={{ flex:1, background:"#0d1117", border:"1px solid #1e2a3a", borderRadius:8, padding:"9px 12px", color:"#dde2f0", fontSize:13, fontFamily:"inherit" }}
+              />
+              <button onClick={submitComment} style={{ padding:"9px 16px", background:`linear-gradient(135deg,${section.accent}33,${section.accent}55)`, border:`1px solid ${section.accentBorder}`, borderRadius:8, color:section.accent, fontSize:13, fontWeight:700, fontFamily:"inherit", whiteSpace:"nowrap" }}>Send</button>
             </div>
           </div>
         </div>
