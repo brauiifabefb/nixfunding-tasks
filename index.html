@@ -206,7 +206,12 @@ function App() {
   async function saveDescription(id, description) {
     if (!isAdmin) return;
     optimistic(id, { description });
-    await supabase.from("tasks").update({ description }).eq("id", id);
+    const { error } = await supabase.from("tasks").update({ description }).eq("id", id);
+    if (error) {
+      showToast("Failed to save description: " + error.message, "warn");
+    } else {
+      showToast("Description saved ✓");
+    }
   }
 
   async function saveNotes(id, notes) {
