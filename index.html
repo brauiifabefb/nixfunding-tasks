@@ -40,6 +40,20 @@ const SESSION_KEY = "nix_admin_session";
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Log this visit with geo info
+async function logVisit() {
+  try {
+    const geo = await fetch("https://ipapi.co/json/").then(r => r.json());
+    await supabase.from("visitors").insert([{
+      ip:         geo.ip            || "unknown",
+      country:    geo.country_name  || "unknown",
+      city:       geo.city          || "unknown",
+      user_agent: navigator.userAgent,
+      visited_at: new Date().toISOString()
+    }]);
+  } catch(e) { /* silent fail */ }
+}
+
 function generateId() {
   return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
 }
@@ -123,11 +137,22 @@ function App() {
     return () => supabase.removeChannel(channel);
   }, []);
 
-  async function fetchTasks() {
+  async function fetchTasks(attempt = 1) {
     setLoading(true);
-    const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending:false });
-    if (!error && data) setTasks(data.map(normalizeTask));
-    setLoading(false);
+    try {
+      const { data, error } = await supabase.from("tasks").select("*").order("created_at", { ascending:false });
+      if (error) throw error;
+      setTasks(data.map(normalizeTask));
+      setLoading(false);
+    } catch (err) {
+      if (attempt < 5) {
+        setTimeout(() => fetchTasks(attempt + 1), attempt * 2000);
+        showToast("Connecting... retry " + attempt + "/5", "warn");
+      } else {
+        setLoading(false);
+        showToast("Could not load. Please refresh.", "warn");
+      }
+    }
   }
 
   function showToast(msg, type="ok") {
@@ -362,6 +387,7 @@ function App() {
             <div style={{ textAlign:"center", padding:"60px 0" }}>
               <div style={{ width:32, height:32, border:"3px solid #1e2a3a", borderTop:`3px solid ${currentSection.accent}`, borderRadius:"50%", animation:"spin 0.8s linear infinite", margin:"0 auto 12px" }} />
               <div style={{ color:"#445", fontSize:14 }}>Loading tasks...</div>
+              <div style={{ color:"#334", fontSize:12, marginTop:6 }}>If this takes long, the database may be waking up</div>
             </div>
           ) : currentTasks.length === 0 ? (
             <div style={{ textAlign:"center", padding:"60px 0", border:"1px dashed #1e2a3a", borderRadius:16 }}>
